@@ -63,13 +63,22 @@ def _determine_pydantic_strategy(tp: type) -> PydanticStrategy:
         for f in model_fields.values()
     )
 
-    # Check for @model_serializer
+    # Check for @model_serializer (top-level)
     schema = getattr(tp, "__pydantic_core_schema__", {})
     serialization = schema.get("serialization", {})
     has_custom_serializer = serialization.get("type") in (
         "function-plain",
         "function-wrap",
     )
+
+    # Check for @field_serializer on any field (nested in field schemas)
+    if not has_custom_serializer:
+        fields_schema = schema.get("schema", {}).get("fields", {})
+        for field_schema in fields_schema.values():
+            field_ser = field_schema.get("schema", {}).get("serialization", {})
+            if field_ser.get("type") in ("function-plain", "function-wrap"):
+                has_custom_serializer = True
+                break
 
     if (
         has_computed
