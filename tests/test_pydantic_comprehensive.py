@@ -218,19 +218,29 @@ class TestPydanticFeatures:
         assert "public_data" in decoded
         assert "secret" not in decoded
 
-    def test_alias_roundtrip(self) -> None:
+    def test_alias_serialization(self) -> None:
         val = ModelWithAlias(user_name="Alice")
         data = Serializer.serialize(val)
         decoded = msgspec.msgpack.decode(data)
-        # model_dump uses alias by default
-        assert decoded.get("user_name") == "Alice" or decoded.get("name") == "Alice"
+        # model_dump(mode='python') without by_alias uses Python attribute name
+        assert decoded == {"name": "Alice"}
+
+    def test_alias_deserialization(self) -> None:
+        """Alias model can be deserialized from data with Python attribute name."""
+        val = ModelWithAlias(user_name="Alice")
+        data = Serializer.serialize(val)
+        result = Serializer.deserialize(data, ModelWithAlias)
+        assert result.name == "Alice"
 
     def test_serialization_alias(self) -> None:
         val = ModelWithSerializationAlias(name="Bob")
         data = Serializer.serialize(val)
         decoded = msgspec.msgpack.decode(data)
-        # model_dump(mode='python') uses serialization_alias
-        assert "userName" in decoded or "name" in decoded
+        # model_dump(mode='python') outputs with serialization_alias as key
+        assert decoded.get("userName") == "Bob" or decoded.get("name") == "Bob"
+        # At least one key must be present with the correct value
+        values = [decoded.get("userName"), decoded.get("name")]
+        assert "Bob" in values
 
     def test_model_serializer_custom_shape(self) -> None:
         val = ModelWithSerializer(x=3, y=4)
@@ -432,3 +442,87 @@ class TestRepeatedCalls:
 class SmallStruct(msgspec.Struct):
     x: int
     y: str
+
+
+# ── Additional Coverage from Review Findings ────────────────────────────────
+
+class TestExcludeFieldRoundtrip:
+    def test_excluded_required_field_makes_deserialization_fail(self) -> None:
+        """Field(exclude=True) without default → deserialization fails because field is missing."""
+        val = ModelWithExclude(public_data="visible", secret="hidden")
+        data = Serializer.serialize(val)
+        # secret is excluded from serialized bytes but has no default
+        # model_validate will fail because 'secret' is required
+        with pytest.raises(DeserializeError):
+            Serializer.deserialize(data, ModelWithExclude)
+
+
+class ModelWithExcludeAndDefault(pydantic.BaseModel):
+    public_data: str
+    secret: str = pydantic.Field(default="redacted", exclude=True)
+
+
+class TestExcludeWithDefault:
+    def test_excluded_field_with_default_roundtrips(self) -> None:
+        val = ModelWithExcludeAndDefault(public_data="visible", secret="actual_secret")
+        data = Serializer.serialize(val)
+        result = Serializer.deserialize(data, ModelWithExcludeAndDefault)
+        assert result.public_data == "visible"
+        assert result.secret == "redacted"  # gets the default, not the original
+
+
+class TestValidatorDuringDeserialization:
+    def test_field_validator_fires_on_deserialize(self) -> None:
+        class AgeModel(pydantic.BaseModel):
+            name: str
+            age: int
+
+            @pydantic.field_validator("age")
+            @classmethod
+            def age_must_be_positive(cls, v: int) -> int:
+                if v < 0:
+                    raise ValueError("age must be positive")
+                return v
+
+        # Valid data roundtrips
+        valid = AgeModel(name="Alice", age=25)
+        result = Serializer.deserialize(Serializer.serialize(valid), AgeModel)
+        assert result == valid
+
+        # Invalid data raises DeserializeError wrapping ValidationError
+        invalid_data = msgspec.msgpack.encode({"name": "Bob", "age": -1})
+        with pytest.raises(DeserializeError) as exc_info:
+            Serializer.deserialize(invalid_data, AgeModel)
+        assert "age must be positive" in str(exc_info.value.__cause__)
+
+
+class TestNestedUnsupportedType:
+    def test_pydantic_model_with_unsupported_nested_raises_serialize_error(self) -> None:
+        class Custom:
+            pass
+
+        class BadModel(pydantic.BaseModel):
+            model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+            item: Custom
+
+        with pytest.raises(SerializeError):
+            Serializer.serialize(BadModel(item=Custom()))
+
+
+class TestDecoderCachePath:
+    def test_decoder_cache_populated_after_first_deserialize(self) -> None:
+        from serializer._core import _decoder_cache
+
+        class FreshStruct(msgspec.Struct):
+            v: int
+
+        data = Serializer.serialize(FreshStruct(v=42))
+
+        # First call: cold path
+        result1 = Serializer.deserialize(data, FreshStruct)
+        assert result1 == FreshStruct(v=42)
+        assert FreshStruct in _decoder_cache
+
+        # Second call: warm path (hits cache)
+        result2 = Serializer.deserialize(data, FreshStruct)
+        assert result2 == FreshStruct(v=42)

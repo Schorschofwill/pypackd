@@ -9,22 +9,12 @@ import msgspec
 from serializer._dispatch import (
     PydanticStrategy,
     classify_type,
+    get_base_model,
     get_pydantic_strategy,
 )
 from serializer._exceptions import DeserializeError
 
 T = TypeVar("T")
-
-# Cache the BaseModel check to avoid repeated imports
-_BaseModel: type | None = None
-
-
-def _get_base_model() -> type:
-    global _BaseModel
-    if _BaseModel is None:
-        from pydantic import BaseModel
-        _BaseModel = BaseModel
-    return _BaseModel
 
 
 def pydantic_enc_hook(obj: Any) -> Any:
@@ -34,8 +24,8 @@ def pydantic_enc_hook(obj: Any) -> Any:
     Nested Pydantic models are handled automatically by msgspec calling
     this hook again for each non-native value.
     """
-    BM = _get_base_model()
-    if isinstance(obj, BM):
+    BM = get_base_model()
+    if BM is not None and isinstance(obj, BM):
         tp = type(obj)
         classify_type(tp)
         strategy = get_pydantic_strategy(tp)

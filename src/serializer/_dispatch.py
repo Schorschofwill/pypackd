@@ -36,6 +36,12 @@ def _check_pydantic() -> bool:
     return _pydantic_available
 
 
+def get_base_model() -> type | None:
+    """Return the cached pydantic.BaseModel class, or None if pydantic is not installed."""
+    _check_pydantic()
+    return _BaseModel
+
+
 def _is_pydantic_type(tp: type) -> bool:
     if _check_pydantic():
         return isinstance(tp, type) and issubclass(tp, _BaseModel)  # type: ignore[arg-type]
@@ -117,7 +123,13 @@ def classify_type(tp: type) -> TypeCategory:
 
 
 def get_pydantic_strategy(tp: type) -> PydanticStrategy:
-    return _pydantic_strategy_cache.get(tp, PydanticStrategy.DICT)
+    try:
+        return _pydantic_strategy_cache[tp]
+    except KeyError:
+        raise RuntimeError(
+            f"get_pydantic_strategy called for {tp.__qualname__!r} before classify_type. "
+            "Call classify_type(tp) first."
+        ) from None
 
 
 def classify_instance(obj: Any) -> TypeCategory:

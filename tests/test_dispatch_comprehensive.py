@@ -193,13 +193,9 @@ class TestStrategyDetection:
                 return v.upper()
 
         classify_type(M)
-        # field_serializer is part of the model schema serialization
-        # The strategy detection should catch this via __pydantic_core_schema__
         strategy = get_pydantic_strategy(M)
-        # Note: field_serializer may or may not trigger MODEL_DUMP depending on
-        # whether it shows up in the top-level schema serialization field.
-        # If it doesn't, __dict__ will bypass it. This test documents the behavior.
-        assert strategy in (PydanticStrategy.DICT, PydanticStrategy.MODEL_DUMP)
+        # field_serializer is detected via nested schema introspection
+        assert strategy == PydanticStrategy.MODEL_DUMP
 
 
 # ── Cache behavior ──────────────────────────────────────────────────────────
@@ -232,13 +228,14 @@ class TestCacheBehavior:
         classify_type(int)
         assert int not in _pydantic_strategy_cache
 
-    def test_get_strategy_uncached_returns_dict_default(self) -> None:
-        """get_pydantic_strategy for an uncached type returns DICT as default."""
+    def test_get_strategy_uncached_raises_runtime_error(self) -> None:
+        """get_pydantic_strategy for an uncached type raises RuntimeError."""
         class NeverClassified(pydantic.BaseModel):
             x: int
 
         # Don't call classify_type — go directly to get_pydantic_strategy
-        assert get_pydantic_strategy(NeverClassified) == PydanticStrategy.DICT
+        with pytest.raises(RuntimeError, match="before classify_type"):
+            get_pydantic_strategy(NeverClassified)
 
 
 # ── classify_instance ───────────────────────────────────────────────────────
