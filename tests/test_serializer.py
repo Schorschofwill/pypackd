@@ -99,6 +99,35 @@ class TestCollectionRoundtrips:
         assert result == [1, "a", True]
 
 
+# -- Stdlib type roundtrips --
+
+class TestStdlibTypeRoundtrips:
+    def test_uuid(self) -> None:
+        val = UUID("12345678-1234-5678-1234-567812345678")
+        result = Serializer.deserialize(Serializer.serialize(val), UUID)
+        assert result == val
+
+    def test_decimal(self) -> None:
+        val = Decimal("3.14159")
+        result = Serializer.deserialize(Serializer.serialize(val), Decimal)
+        assert result == val
+
+    def test_date(self) -> None:
+        val = date(2024, 6, 15)
+        result = Serializer.deserialize(Serializer.serialize(val), date)
+        assert result == val
+
+    def test_timedelta(self) -> None:
+        val = timedelta(days=1, hours=2, minutes=30)
+        result = Serializer.deserialize(Serializer.serialize(val), timedelta)
+        assert result == val
+
+    def test_enum(self) -> None:
+        val = Color.RED
+        result = Serializer.deserialize(Serializer.serialize(val), Color)
+        assert result == val
+
+
 # -- Structured type roundtrips --
 
 class TestStructuredRoundtrips:

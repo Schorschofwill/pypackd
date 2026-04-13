@@ -9,6 +9,7 @@ import msgspec
 import pydantic
 import pytest
 
+from serializer._exceptions import DeserializeError
 from serializer._pydantic import pydantic_enc_hook, deserialize_pydantic
 
 
@@ -85,17 +86,20 @@ class TestEdgeCases:
 class TestErrorPaths:
     def test_missing_required_field(self) -> None:
         data = msgspec.msgpack.encode({"name": "Test"})
-        with pytest.raises(pydantic.ValidationError):
+        with pytest.raises(DeserializeError) as exc_info:
             deserialize_pydantic(data, SimpleModel)
+        assert isinstance(exc_info.value.__cause__, pydantic.ValidationError)
 
     def test_wrong_field_types(self) -> None:
         data = msgspec.msgpack.encode({"name": 123, "age": "not_int"})
-        with pytest.raises(pydantic.ValidationError):
+        with pytest.raises(DeserializeError) as exc_info:
             deserialize_pydantic(data, SimpleModel)
+        assert isinstance(exc_info.value.__cause__, pydantic.ValidationError)
 
     def test_invalid_msgpack_bytes(self) -> None:
-        with pytest.raises(msgspec.DecodeError):
+        with pytest.raises(DeserializeError) as exc_info:
             deserialize_pydantic(b"\xff\xff\xff", SimpleModel)
+        assert isinstance(exc_info.value.__cause__, msgspec.DecodeError)
 
 
 class TestRoundtrip:

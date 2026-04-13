@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
+
+import msgspec
 
 from serializer._dispatch import (
     PydanticStrategy,
-    _pydantic_strategy_cache,
     classify_type,
+    get_pydantic_strategy,
 )
+from serializer._exceptions import DeserializeError
+
+T = TypeVar("T")
 
 # Cache the BaseModel check to avoid repeated imports
 _BaseModel: type | None = None
@@ -32,11 +37,8 @@ def pydantic_enc_hook(obj: Any) -> Any:
     BM = _get_base_model()
     if isinstance(obj, BM):
         tp = type(obj)
-        # Fast path: check strategy cache directly (avoids classify_type overhead)
-        strategy = _pydantic_strategy_cache.get(tp)
-        if strategy is None:
-            classify_type(tp)
-            strategy = _pydantic_strategy_cache.get(tp, PydanticStrategy.DICT)
+        classify_type(tp)
+        strategy = get_pydantic_strategy(tp)
 
         if strategy is PydanticStrategy.MODEL_DUMP:
             return obj.model_dump(mode="python")
@@ -49,30 +51,16 @@ def pydantic_enc_hook(obj: Any) -> Any:
     )
 
 
-def convert_pydantic_to_dict(obj: Any) -> dict[str, Any]:
-    """Convert a Pydantic model to a dict for serialization.
-
-    Used by Serializer.serialize() to pre-convert before encoding,
-    avoiding the C→Python→C enc_hook round-trip overhead.
-    """
-    tp = type(obj)
-    strategy = _pydantic_strategy_cache.get(tp)
-    if strategy is None:
-        classify_type(tp)
-        strategy = _pydantic_strategy_cache.get(tp, PydanticStrategy.DICT)
-
-    if strategy is PydanticStrategy.MODEL_DUMP:
-        return obj.model_dump(mode="python")
-    return obj.__dict__
-
-
-def deserialize_pydantic(data: bytes, target_type: type) -> Any:
+def deserialize_pydantic(data: bytes, target_type: type[T]) -> T:
     """Deserialize MessagePack bytes into a Pydantic model.
 
     Decodes to a raw dict via msgspec, then reconstructs the model
     using model_validate() for correctness guarantees.
     """
-    import msgspec
-
-    decoded = msgspec.msgpack.decode(data)
-    return target_type.model_validate(decoded)
+    try:
+        decoded = msgspec.msgpack.decode(data)
+        return target_type.model_validate(decoded)  # type: ignore[return-value]
+    except Exception as exc:
+        raise DeserializeError(
+            f"Failed to deserialize into {target_type.__qualname__!r}: {exc}"
+        ) from exc

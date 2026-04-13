@@ -51,7 +51,33 @@ def _determine_pydantic_strategy(tp: type) -> PydanticStrategy:
     has_computed = bool(getattr(tp, "model_computed_fields", None))
     config = getattr(tp, "model_config", {})
     has_extra = config.get("extra") == "allow"
-    if has_computed or has_extra:
+
+    # Check for fields with exclude=True, aliases, or custom serializers
+    model_fields = getattr(tp, "model_fields", {})
+    has_excluded = any(
+        getattr(f, "exclude", False) for f in model_fields.values()
+    )
+    has_alias = any(
+        getattr(f, "alias", None) is not None
+        or getattr(f, "serialization_alias", None) is not None
+        for f in model_fields.values()
+    )
+
+    # Check for @model_serializer
+    schema = getattr(tp, "__pydantic_core_schema__", {})
+    serialization = schema.get("serialization", {})
+    has_custom_serializer = serialization.get("type") in (
+        "function-plain",
+        "function-wrap",
+    )
+
+    if (
+        has_computed
+        or has_extra
+        or has_excluded
+        or has_alias
+        or has_custom_serializer
+    ):
         return PydanticStrategy.MODEL_DUMP
     return PydanticStrategy.DICT
 

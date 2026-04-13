@@ -48,6 +48,24 @@ class PydanticWithExtra(pydantic.BaseModel):
     x: int
 
 
+class PydanticWithExclude(pydantic.BaseModel):
+    public: str
+    secret: str = pydantic.Field(exclude=True)
+
+
+class PydanticWithAlias(pydantic.BaseModel):
+    name: str = pydantic.Field(alias="user_name")
+
+
+class PydanticWithSerializer(pydantic.BaseModel):
+    x: int
+    y: int
+
+    @pydantic.model_serializer
+    def custom_serialize(self) -> dict:
+        return {"sum": self.x + self.y}
+
+
 class TestClassifyType:
     def test_pydantic_model(self) -> None:
         assert classify_type(MyPydanticModel) == TypeCategory.PYDANTIC
@@ -108,3 +126,15 @@ class TestPydanticStrategy:
     def test_extra_allow_uses_model_dump(self) -> None:
         classify_type(PydanticWithExtra)
         assert get_pydantic_strategy(PydanticWithExtra) == PydanticStrategy.MODEL_DUMP
+
+    def test_excluded_field_uses_model_dump(self) -> None:
+        classify_type(PydanticWithExclude)
+        assert get_pydantic_strategy(PydanticWithExclude) == PydanticStrategy.MODEL_DUMP
+
+    def test_alias_uses_model_dump(self) -> None:
+        classify_type(PydanticWithAlias)
+        assert get_pydantic_strategy(PydanticWithAlias) == PydanticStrategy.MODEL_DUMP
+
+    def test_model_serializer_uses_model_dump(self) -> None:
+        classify_type(PydanticWithSerializer)
+        assert get_pydantic_strategy(PydanticWithSerializer) == PydanticStrategy.MODEL_DUMP
