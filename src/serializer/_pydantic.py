@@ -6,10 +6,20 @@ from typing import Any
 
 from serializer._dispatch import (
     PydanticStrategy,
+    _pydantic_strategy_cache,
     classify_type,
-    get_pydantic_strategy,
-    TypeCategory,
 )
+
+# Cache the BaseModel check to avoid repeated imports
+_BaseModel: type | None = None
+
+
+def _get_base_model() -> type:
+    global _BaseModel
+    if _BaseModel is None:
+        from pydantic import BaseModel
+        _BaseModel = BaseModel
+    return _BaseModel
 
 
 def pydantic_enc_hook(obj: Any) -> Any:
@@ -19,23 +29,41 @@ def pydantic_enc_hook(obj: Any) -> Any:
     Nested Pydantic models are handled automatically by msgspec calling
     this hook again for each non-native value.
     """
-    from pydantic import BaseModel
-
-    if isinstance(obj, BaseModel):
+    BM = _get_base_model()
+    if isinstance(obj, BM):
         tp = type(obj)
-        classify_type(tp)
-        strategy = get_pydantic_strategy(tp)
+        # Fast path: check strategy cache directly (avoids classify_type overhead)
+        strategy = _pydantic_strategy_cache.get(tp)
+        if strategy is None:
+            classify_type(tp)
+            strategy = _pydantic_strategy_cache.get(tp, PydanticStrategy.DICT)
 
-        if strategy == PydanticStrategy.MODEL_DUMP:
+        if strategy is PydanticStrategy.MODEL_DUMP:
             return obj.model_dump(mode="python")
-        else:
-            return obj.__dict__
+        return obj.__dict__
 
     raise TypeError(
         f"Cannot serialize object of type {type(obj).__qualname__!r}. "
         "Only Pydantic BaseModels, msgspec Structs, dataclasses, "
         "and msgspec-native types are supported."
     )
+
+
+def convert_pydantic_to_dict(obj: Any) -> dict[str, Any]:
+    """Convert a Pydantic model to a dict for serialization.
+
+    Used by Serializer.serialize() to pre-convert before encoding,
+    avoiding the C→Python→C enc_hook round-trip overhead.
+    """
+    tp = type(obj)
+    strategy = _pydantic_strategy_cache.get(tp)
+    if strategy is None:
+        classify_type(tp)
+        strategy = _pydantic_strategy_cache.get(tp, PydanticStrategy.DICT)
+
+    if strategy is PydanticStrategy.MODEL_DUMP:
+        return obj.model_dump(mode="python")
+    return obj.__dict__
 
 
 def deserialize_pydantic(data: bytes, target_type: type) -> Any:

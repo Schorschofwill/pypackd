@@ -18,16 +18,8 @@ _encoder = msgspec.msgpack.Encoder(enc_hook=pydantic_enc_hook)
 _decoder_cache: dict[type, msgspec.msgpack.Decoder[Any]] = {}
 _decoder_lock = threading.Lock()
 
-
-def _get_decoder(target_type: type) -> msgspec.msgpack.Decoder[Any]:
-    try:
-        return _decoder_cache[target_type]
-    except KeyError:
-        pass
-    decoder = msgspec.msgpack.Decoder(type=target_type)
-    with _decoder_lock:
-        _decoder_cache[target_type] = decoder
-    return decoder
+# Pre-resolve for hot path — avoid repeated attribute lookups
+_encode = _encoder.encode
 
 
 class Serializer:
@@ -42,16 +34,18 @@ class Serializer:
         obj = Serializer.deserialize(data, MyType)
     """
 
+    __slots__ = ()
+
     @staticmethod
     def serialize(obj: Any) -> bytes:
         """Serialize any supported Python object to MessagePack bytes.
 
         Pydantic BaseModels are handled transparently via enc_hook.
         All msgspec-native types (primitives, collections, dataclasses,
-        Structs, datetime, UUID, Decimal, etc.) pass through with zero overhead.
+        Structs, datetime, UUID, Decimal, etc.) pass through directly.
         """
         try:
-            return _encoder.encode(obj)
+            return _encode(obj)
         except Exception as exc:
             raise SerializeError(
                 f"Failed to serialize object of type {type(obj).__qualname__!r}: {exc}"
@@ -65,10 +59,19 @@ class Serializer:
         For all other types, uses a cached msgspec Decoder for maximum performance.
         """
         try:
+            # Hot path: check decoder cache directly
+            decoder = _decoder_cache.get(target_type)
+            if decoder is not None:
+                return decoder.decode(data)  # type: ignore[return-value]
+
+            # Cold path: classify and cache
             category = classify_type(target_type)
             if category == TypeCategory.PYDANTIC:
                 return deserialize_pydantic(data, target_type)  # type: ignore[return-value]
-            decoder = _get_decoder(target_type)
+
+            decoder = msgspec.msgpack.Decoder(type=target_type)
+            with _decoder_lock:
+                _decoder_cache[target_type] = decoder
             return decoder.decode(data)  # type: ignore[return-value]
         except (SerializeError, DeserializeError):
             raise
