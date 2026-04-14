@@ -36,11 +36,6 @@ def _check_pydantic() -> bool:
     return _pydantic_available
 
 
-def get_base_model() -> type | None:
-    """Return the cached pydantic.BaseModel class, or None if pydantic is not installed."""
-    _check_pydantic()
-    return _BaseModel
-
 
 def _is_pydantic_type(tp: type) -> bool:
     if _check_pydantic():
@@ -54,6 +49,10 @@ def _is_pydantic_type(tp: type) -> bool:
 
 
 def _determine_pydantic_strategy(tp: type) -> PydanticStrategy:
+    # RootModel.model_dump() unwraps the root value, so __dict__ diverges
+    if getattr(tp, "__pydantic_root_model__", False):
+        return PydanticStrategy.MODEL_DUMP
+
     has_computed = bool(getattr(tp, "model_computed_fields", None))
     config = getattr(tp, "model_config", {})
     has_extra = config.get("extra") == "allow"

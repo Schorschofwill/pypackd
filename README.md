@@ -112,7 +112,7 @@ Serializer.deserialize(data, Order)  # Full roundtrip with all nested types
 | Datetime | `datetime`, `date`, `time`, `timedelta` |
 | Stdlib | `UUID`, `Decimal`, `Enum` |
 | Structured | `dataclass`, `NamedTuple`, `TypedDict`, `msgspec.Struct` |
-| Pydantic | `BaseModel` (incl. computed fields, aliases, excluded fields, custom serializers) |
+| Pydantic | `BaseModel`, `RootModel` (incl. computed fields, aliases, excluded fields, custom serializers, model/field validators) |
 | Typing | `Optional`, `Union`, `Literal`, generics |
 
 ## How It Works
@@ -120,9 +120,9 @@ Serializer.deserialize(data, Order)  # Full roundtrip with all nested types
 pypackd is a thin adapter layer over [msgspec](https://jcristharif.com/msgspec/), which handles all non-Pydantic types natively with zero overhead. For Pydantic models, pypackd auto-detects the model's features and chooses the fastest serialization path:
 
 - **Simple models** → `obj.__dict__` (2-5x faster than `model_dump()`)
-- **Models with computed fields, aliases, excluded fields, or custom serializers** → `model_dump(mode='python')` for correctness
+- **RootModel, models with computed fields, aliases, excluded fields, or custom serializers** → `model_dump(mode='python')` for correctness
 
-Type classifications are cached, Encoder/Decoder instances are reused, and all cache writes are thread-safe.
+Type classifications are cached, Encoder/Decoder instances are reused, and all cache writes are thread-safe. 292 tests, 99% code coverage.
 
 ## Error Handling
 

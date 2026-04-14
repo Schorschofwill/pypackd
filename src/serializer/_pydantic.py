@@ -8,9 +8,9 @@ import msgspec
 
 from serializer._dispatch import (
     PydanticStrategy,
+    TypeCategory,
+    _pydantic_strategy_cache,
     classify_type,
-    get_base_model,
-    get_pydantic_strategy,
 )
 from serializer._exceptions import DeserializeError
 
@@ -24,21 +24,26 @@ def pydantic_enc_hook(obj: Any) -> Any:
     Nested Pydantic models are handled automatically by msgspec calling
     this hook again for each non-native value.
     """
-    BM = get_base_model()
-    if BM is not None and isinstance(obj, BM):
-        tp = type(obj)
-        classify_type(tp)
-        strategy = get_pydantic_strategy(tp)
+    tp = type(obj)
 
-        if strategy is PydanticStrategy.MODEL_DUMP:
-            return obj.model_dump(mode="python")
-        return obj.__dict__
+    # Hot path: single dict lookup on existing strategy cache
+    try:
+        strategy = _pydantic_strategy_cache[tp]
+    except KeyError:
+        # Cold path: classify type (populates both _type_cache and
+        # _pydantic_strategy_cache for Pydantic types)
+        category = classify_type(tp)
+        if category is not TypeCategory.PYDANTIC:
+            raise TypeError(
+                f"Cannot serialize object of type {tp.__qualname__!r}. "
+                "Only Pydantic BaseModels, msgspec Structs, dataclasses, "
+                "and msgspec-native types are supported."
+            )
+        strategy = _pydantic_strategy_cache[tp]
 
-    raise TypeError(
-        f"Cannot serialize object of type {type(obj).__qualname__!r}. "
-        "Only Pydantic BaseModels, msgspec Structs, dataclasses, "
-        "and msgspec-native types are supported."
-    )
+    if strategy is PydanticStrategy.MODEL_DUMP:
+        return obj.model_dump(mode="python")
+    return obj.__dict__
 
 
 def deserialize_pydantic(data: bytes, target_type: type[T]) -> T:

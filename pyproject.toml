@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pypackd"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified Python serializer with msgspec MessagePack backend"
 readme = "README.md"
 requires-python = ">=3.10"
