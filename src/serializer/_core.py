@@ -9,6 +9,7 @@ import msgspec
 
 from serializer._dispatch import TypeCategory, classify_type
 from serializer._exceptions import DeserializeError, SerializeError
+from serializer._pack import PackedResult, reconstruct_value, resolve_tag
 from serializer._pydantic import deserialize_pydantic, pydantic_enc_hook
 
 T = TypeVar("T")
@@ -51,6 +52,80 @@ class Serializer:
         except Exception as exc:
             raise SerializeError(
                 f"Failed to serialize object of type {type(obj).__qualname__!r}: {exc}"
+            ) from exc
+
+    @staticmethod
+    def pack(obj: Any, *, tag: str | None = None) -> bytes:
+        """Serialize an object with a self-describing type tag.
+
+        Encodes the object as a msgpack array ``[tag, data]`` where ``tag``
+        identifies the type for later reconstruction via :meth:`unpack`.
+
+        For stdlib types, the tag is the type name (e.g. ``"int"``,
+        ``"datetime"``). For custom types (Pydantic, dataclass, Struct),
+        the tag is the fully-qualified class name.
+
+        Args:
+            obj: The object to serialize.
+            tag: Optional override tag. Must not collide with reserved
+                stdlib tag names.
+
+        Raises:
+            SerializeError: If the object cannot be serialized or the
+                tag collides with a reserved stdlib tag.
+        """
+        try:
+            resolved_tag = resolve_tag(obj, tag)
+            return _encode([resolved_tag, obj])
+        except SerializeError:
+            raise
+        except Exception as exc:
+            raise SerializeError(
+                f"Failed to pack object of type {type(obj).__qualname__!r}: {exc}"
+            ) from exc
+
+    @staticmethod
+    def unpack(data: bytes) -> PackedResult:
+        """Deserialize self-describing packed bytes.
+
+        Decodes a ``[tag, data]`` msgpack array and reconstructs the value
+        based on the type tag. Stdlib types are automatically reconstructed;
+        custom types are returned as raw decoded data with metadata.
+
+        Returns:
+            A :class:`PackedResult` with the value, type name, and
+            ``is_custom`` flag.
+
+        Raises:
+            DeserializeError: If the data is corrupt, not in the expected
+                format, or the tag/data combination is invalid.
+        """
+        try:
+            raw = msgspec.msgpack.decode(data)
+        except Exception as exc:
+            raise DeserializeError(
+                f"Failed to decode packed data: {exc}"
+            ) from exc
+
+        if not isinstance(raw, list) or len(raw) != 2:
+            raise DeserializeError(
+                "Expected a [tag, data] array, got "
+                f"{type(raw).__name__} with {len(raw) if isinstance(raw, list) else 'N/A'} elements"
+            )
+
+        tag_value, payload = raw
+        if not isinstance(tag_value, str):
+            raise DeserializeError(
+                f"Tag must be a string, got {type(tag_value).__name__!r}"
+            )
+
+        try:
+            return reconstruct_value(tag_value, payload)
+        except (SerializeError, DeserializeError):
+            raise
+        except Exception as exc:
+            raise DeserializeError(
+                f"Failed to reconstruct value for tag {tag_value!r}: {exc}"
             ) from exc
 
     @staticmethod
